@@ -1,0 +1,31 @@
+{
+  "id": "first_try",
+  "config": {
+      "backend_name": "local_qasm_simulator",
+      "shots": 1,
+      "data": ["density_matrix"],
+      "noise_params": {
+        "id": {"p_pauli": [0.5, 0.2, 0.2]}
+      }
+  },
+  "circuits": [
+    {
+      "name": "my_first_try",
+      "compiled_circuit": {
+        "header": {
+                    "clbit_labels": [],
+                    "number_of_clbits": 0,
+                    "number_of_qubits": 3,
+                    "qubit_labels": [["q", 0], ["q", 1], ["q", 2]]
+                },
+        "operations": [
+                    {"name": "id", "qubits": [0]},
+                    {"name": "id", "qubits": [1]},
+                    {"name": "id", "qubits": [2]},
+                    {"name": "snapshot", "params": [0]}
+                ]
+      }
+    }
+  ]
+}
+
