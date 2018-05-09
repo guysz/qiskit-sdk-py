@@ -166,7 +166,7 @@ class QuantumProgram(object):
         """Create a new Quantum Register.
 
         Args:
-            name (hashable or None): the name of the quantum register. If None, an
+            name (str or None): the name of the quantum register. If None, an
                 automatically generated identifier will be assigned.
             size (int): the size of the quantum register
 
@@ -187,6 +187,11 @@ class QuantumProgram(object):
         if name is None:
             name = self._create_id('q', self.__quantum_registers)
 
+        if not isinstance(name, str):
+            logger.info(">> quantum_register name is not a valid type: %s ", type(name))
+            raise QISKitError("The register name should be a string "
+                              "(or None for autogenerate a name).")
+
         self.__quantum_registers[name] = QuantumRegister(size=size, name=name)
         logger.info(">> new quantum_register created: %s %s", name, size)
         return self.__quantum_registers[name]
@@ -195,7 +200,7 @@ class QuantumProgram(object):
         """Destroy an existing Quantum Register.
 
         Args:
-            name (hashable): the name of the quantum register
+            name (str): the name of the quantum register
 
         Raises:
             QISKitError: if the register does not exist in the program.
@@ -250,8 +255,8 @@ class QuantumProgram(object):
         """Create a new Classical Register.
 
         Args:
-            name (hashable or None): the name of the classical register. If None, an
-                automatically generated identifier will be assigned.
+            name (str or None): the name of the classical register. If None, an
+                automatically generated identifier will be assigned..
             size (int): the size of the classical register
         Returns:
             ClassicalRegister: internal reference to a classical register
@@ -269,6 +274,11 @@ class QuantumProgram(object):
 
         if name is None:
             name = self._create_id('c', self.__classical_registers)
+
+        if not isinstance(name, str):
+            logger.info(">> quantum_register name is not a valid type: %s ", type(name))
+            raise QISKitError("The register name should be a string "
+                              "(or None for autogenerate a name).")
 
         self.__classical_registers[name] = ClassicalRegister(size=size, name=name)
         logger.info(">> new classical register created: %s %s", name, size)
@@ -301,7 +311,7 @@ class QuantumProgram(object):
         """Destroy an existing Classical Register.
 
         Args:
-            name (hashable): the name of the classical register
+            name (str): the name of the classical register
 
         Raises:
             QISKitError: if the register does not exist in the program.
@@ -332,7 +342,7 @@ class QuantumProgram(object):
         """Create a empty Quantum Circuit in the Quantum Program.
 
         Args:
-            name (hashable or None): the name of the circuit. If None, an
+            name (str or None): the name of the circuit. If None, an
                 automatically generated identifier will be assigned.
             qregisters (list(QuantumRegister)): is an Array of Quantum
                 Registers by object reference
@@ -364,7 +374,7 @@ class QuantumProgram(object):
         destroy any registers associated with the circuit.
 
         Args:
-            name (hashable): the name of the circuit
+            name (str): the name of the circuit
 
         Raises:
             QISKitError: if the register does not exist in the program.
@@ -377,7 +387,7 @@ class QuantumProgram(object):
         """Add a new circuit based on an Object representation.
 
         Args:
-            name (hashable or None): the name of the circuit to add. If None, an
+            name (str or None): the name of the circuit to add. If None, an
                 automatically generated identifier will be assigned to the
                 circuit.
             quantum_circuit (QuantumCircuit): a quantum circuit to add to the
@@ -396,10 +406,7 @@ class QuantumProgram(object):
             else:
                 name = self._create_id('qc', self.__quantum_program.keys())
                 quantum_circuit.name = name
-        for qname, qreg in quantum_circuit.get_qregs().items():
-            self.create_quantum_register(qname, len(qreg))
-        for cname, creg in quantum_circuit.get_cregs().items():
-            self.create_classical_register(cname, len(creg))
+
         self.__quantum_program[name] = quantum_circuit
 
     def load_qasm_file(self, qasm_file, name=None,
@@ -537,7 +544,7 @@ class QuantumProgram(object):
         """Return a Quantum Register by name.
 
         Args:
-            name (hashable or None): the name of the quantum register. If None and there is only
+            name (str or None): the name of the quantum register. If None and there is only
                 one quantum register available, returns that one.
         Returns:
             QuantumRegister: The quantum register with this name.
@@ -556,7 +563,7 @@ class QuantumProgram(object):
         """Return a Classical Register by name.
 
         Args:
-            name (hashable or None): the name of the classical register. If None and there is only
+            name (str or None): the name of the classical register. If None and there is only
                 one classical register available, returns that one.
         Returns:
             ClassicalRegister: The classical register with this name.
@@ -575,17 +582,17 @@ class QuantumProgram(object):
 
     def get_quantum_register_names(self):
         """Return all the names of the quantum Registers."""
-        return list(self.__quantum_registers.keys())
+        return sorted(list(self.__quantum_registers.keys()))
 
     def get_classical_register_names(self):
         """Return all the names of the classical Registers."""
-        return list(self.__classical_registers.keys())
+        return sorted(list(self.__classical_registers.keys()))
 
     def get_circuit(self, name=None):
         """Return a Circuit Object by name.
 
         Args:
-            name (hashable or None): the name of the quantum circuit.
+            name (str or None): the name of the quantum circuit.
                 If None and there is only one circuit available, returns
                 that one.
         Returns:
@@ -604,13 +611,13 @@ class QuantumProgram(object):
 
     def get_circuit_names(self):
         """Return all the names of the quantum circuits."""
-        return list(self.__quantum_program.keys())
+        return sorted(list(self.__quantum_program.keys()))
 
     def get_qasm(self, name=None):
         """Get qasm format of circuit by name.
 
         Args:
-            name (hashable or None): name of the circuit. If None and only one circuit is
+            name (str or None): name of the circuit. If None and only one circuit is
                 available, that one is selected.
 
         Returns:
@@ -628,8 +635,8 @@ class QuantumProgram(object):
         """Get qasm format of circuit by list of names.
 
         Args:
-            list_circuit_name (list[hashable] or None): names of the circuit.
-                If None, it gets all the circuits in the program.
+            list_circuit_name (list[str] or None): names of the circuit. If None, it gets all the
+                circuits in the program.
 
         Returns:
             list(QuantumCircuit): List of quantum circuit in qasm format
@@ -756,7 +763,7 @@ class QuantumProgram(object):
 
         return self.__api
 
-    def available_backends(self):
+    def available_backends(self, compact=True):
         """All the backends that are seen by QISKIT.
 
         .. deprecated:: 0.5
@@ -769,7 +776,7 @@ class QuantumProgram(object):
             "qiskit.backends.remote_backends() instead is recommended.",
             DeprecationWarning)
 
-        return qiskit.wrapper.available_backends()
+        return qiskit.wrapper.available_backends(compact=compact)
 
     def online_backends(self):
         """Get the online backends.
@@ -1041,7 +1048,7 @@ class QuantumProgram(object):
             instead of the stdout.
 
         Returns:
-            list(hashable): names of the circuits in `qobj`
+            list(str): names of the circuits in `qobj`
         """
         if not qobj:
             print_func("no executions to run")
@@ -1250,7 +1257,7 @@ class QuantumProgram(object):
         circuits to run on different backends.
 
         Args:
-            name_of_circuits (list[hashable] or hashable or None): circuit
+            name_of_circuits (list[str] or str or None): circuit
                 names to be executed. If None, all the circuits will be
                 executed.
             backend (str): a string representing the backend to compile to.
@@ -1285,7 +1292,7 @@ class QuantumProgram(object):
             max_credits (int): the max credits to use 3, or 5
             seed (int): the initial seed the simulators use
             hpc (dict): This will setup some parameter for
-                        ibmqx_hpc_qasm_simulator, using a JSON-like format like::
+                        ibmq_qasm_simulator_hpc, using a JSON-like format like::
 
                             {
                                 'multi_shot_optimization': Boolean,
@@ -1293,7 +1300,7 @@ class QuantumProgram(object):
                             }
 
                         This parameter MUST be used only with
-                        ibmqx_hpc_qasm_simulator, otherwise the SDK will warn
+                        ibmq_qasm_simulator_hpc, otherwise the SDK will warn
                         the user via logging, and set the value to None.
             skip_translation (bool): If True, bypass most of the compilation process and
                 creates a qobj with minimal check nor translation

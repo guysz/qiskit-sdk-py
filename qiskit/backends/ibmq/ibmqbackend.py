@@ -52,9 +52,6 @@ class IBMQBackend(BaseBackend):
             for key, vals in self._configuration.items():
                 new_key = _snake_case_to_camel_case(key)
                 configuration_edit[new_key] = vals
-            #  FIXME: This is a hack as the hpc simulator is not correct in api
-            if configuration_edit['name'] == 'ibmqx_hpc_qasm_simulator':
-                configuration_edit['simulator'] = True
             self._configuration = configuration_edit
             # FIXME: This is a hack to make sure that the
             # local : False is added to the online device
@@ -70,6 +67,7 @@ class IBMQBackend(BaseBackend):
             Result: Result object.
 
         Raises:
+            QISKitError: if there are inconsistencies between qobj data and backend data
             ResultError: if the api put 'error' in its output
         """
         qobj = q_job.qobj
@@ -88,7 +86,7 @@ class IBMQBackend(BaseBackend):
 
         seed0 = qobj['circuits'][0]['config']['seed']
         hpc = None
-        if (qobj['config']['backend_name'] == 'ibmqx_hpc_qasm_simulator' and
+        if (qobj['config']['backend_name'] == 'ibmq_qasm_simulator_hpc' and
                 'hpc' in qobj['config']):
             try:
                 # Use CamelCase when passing the hpc parameters to the API.
@@ -101,9 +99,10 @@ class IBMQBackend(BaseBackend):
             except (KeyError, TypeError):
                 hpc = None
 
-        # TODO: this should be self._configuration['name'] - need to check that
-        # it is always the case.
         backend_name = qobj['config']['backend_name']
+        if backend_name != self.name:
+            raise QISKitError("inconsistent qobj backend "
+                              "name ({0} != {1})".format(backend_name, self.name))
         output = self._api.run_job(api_jobs, backend_name,
                                    shots=qobj['config']['shots'],
                                    max_credits=qobj['config']['max_credits'],
@@ -121,6 +120,8 @@ class IBMQBackend(BaseBackend):
         job_result['name'] = qobj['id']
         job_result['backend'] = qobj['config']['backend_name']
         this_result = Result(job_result, qobj)
+        if not self.configuration['simulator'] and this_result.get_status() == "COMPLETED":
+            _reorder_bits(this_result)  # TODO: remove this after Qobj
         return this_result
 
     @property
@@ -170,11 +171,11 @@ class IBMQBackend(BaseBackend):
         try:
             backend_name = self.configuration['name']
             parameters = self._api.backend_parameters(backend_name)
-            # FIXME a hack to remove calibration data that is none.
+            # FIXME a hack to remove parameters data that is none.
             # Needs to be fixed in api
             if backend_name == 'ibmqx_hpc_qasm_simulator':
                 parameters = {}
-            # FIXME a hack to remove calibration data that is none.
+            # FIXME a hack to remove parameters data that is none.
             # Needs to be fixed in api
             if backend_name == 'ibmqx_qasm_simulator':
                 parameters = {}
@@ -265,3 +266,58 @@ def _wait_for_job(job_id, api, wait=5, timeout=60):
                                   'status': job_result['qasms'][index]['status']})
     return {'job_id': job_id, 'status': job_result['status'],
             'result': job_result_return}
+
+
+def _reorder_bits(result):
+    """temporary fix for ibmq backends.
+    for every ran circuit, get reordering information from qobj
+    and apply reordering on result"""
+    for idx, circ in enumerate(result._qobj['circuits']):
+
+        # device_qubit -> device_clbit (how it should have been)
+        measure_dict = {op['qubits'][0]: op['clbits'][0]
+                        for op in circ['compiled_circuit']['operations']
+                        if op['name'] == 'measure'}
+
+        res = result._result['result'][idx]
+        counts_dict_new = {}
+        for item in res['data']['counts'].items():
+            # fix clbit ordering to what it should have been
+            bits = list(item[0])
+            bits.reverse()  # lsb in 0th position
+            count = item[1]
+            reordered_bits = list('x' * len(bits))
+            for device_clbit, bit in enumerate(bits):
+                if device_clbit in measure_dict:
+                    correct_device_clbit = measure_dict[device_clbit]
+                    reordered_bits[correct_device_clbit] = bit
+            reordered_bits.reverse()
+
+            # only keep the clbits specified by circuit, not everything on device
+            num_clbits = circ['compiled_circuit']['header']['number_of_clbits']
+            compact_key = reordered_bits[-num_clbits:]
+            compact_key = "".join([b if b != 'x' else '0'
+                                   for b in compact_key])
+
+            # insert spaces to signify different classical registers
+            cregs = circ['compiled_circuit']['header']['clbit_labels']
+            if sum([creg[1] for creg in cregs]) != num_clbits:
+                raise ResultError("creg sizes don't add up in result header.")
+            creg_begin_pos = []
+            creg_end_pos = []
+            acc = 0
+            for creg in reversed(cregs):
+                creg_size = creg[1]
+                creg_begin_pos.append(acc)
+                creg_end_pos.append(acc + creg_size)
+                acc += creg_size
+            compact_key = " ".join([compact_key[creg_begin_pos[i]:creg_end_pos[i]]
+                                    for i in range(len(cregs))])
+
+            # marginalize over unwanted measured qubits
+            if compact_key not in counts_dict_new:
+                counts_dict_new[compact_key] = count
+            else:
+                counts_dict_new[compact_key] += count
+
+        res['data']['counts'] = counts_dict_new
