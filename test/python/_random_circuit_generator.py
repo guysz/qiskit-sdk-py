@@ -157,6 +157,7 @@ class RandomCircuitGenerator(object):
             max_registers = numpy.random.choice(reg_pop, p=register_weights)
             reg_weight = numpy.ones(max_registers) / float(max_registers)
             reg_sizes = rand_register_sizes(n_qubits, reg_weight)
+            reg_sizes = [n_qubits]
             n_registers = len(reg_sizes)
             circuit = QuantumCircuit()
             for i_size, size in enumerate(reg_sizes):
