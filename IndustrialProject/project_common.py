@@ -1,34 +1,13 @@
 import sys
-import re
 import numpy as np
 import copy
+from enum import Enum
 sys.path.append("../")
 import qiskit.backends.local.qasm_simulator_cpp as qs
 from qiskit.tools.visualization import plot_circuit, circuit_drawer
 sys.path.append('../test/python/')
 from _random_circuit_generator import RandomCircuitGenerator
 sim_path = '../../yael_branch/qiskit-sdk-py/out/qiskit_simulator'
-
-
-Backends = [
-    'local_qasm_simulator_cpp',
-    'local_clifford_simulator_cpp'
-]
-
-SingleQubitGates = [
-    'id',
-    'x',
-    'y',
-    'z',
-    'h',
-    's'
-]
-
-TwoQubitsGates = [
-    'CX'
-]
-
-Gates = SingleQubitGates + TwoQubitsGates
 
 GateErrors = [
     # 'measure',
@@ -43,11 +22,11 @@ EXACT_SIM_STR = 'local_qasm_simulator_cpp'
 CLIFFORD_SIM_STR = 'local_clifford_simulator_cpp'
 RELAXATION_RATE = 1.0
 THERMAL_POPULATIONS = [1.0, 0.0]
-DEFAULT_QOBJ_ID = 'Test'
-DEFAULT_SHOTS_NUM = 10000
-DEFAULT_SEED = 1
-MIN_GATES_NUM = 10
-MAX_GATES_NUM = 20
+
+
+class ExperimentType(Enum):
+    EXACT_ONLY = 0
+    WITH_CLIFFORD = 1
 
 
 def generate_counts_vec(sim_output, circuit_index, num_of_qubits):
@@ -59,6 +38,10 @@ def generate_counts_vec(sim_output, circuit_index, num_of_qubits):
     return vec[np.newaxis] / sim_output['result'][circuit_index]['shots']
 
 
+def extract_density_matrix(sim_output, circuit_index):
+    return sim_output['result'][circuit_index]['data']['density_matrix']
+
+
 def add_measurements(qobj):
     new_qobj = copy.deepcopy(qobj)
     for circuit in new_qobj['circuits']:
@@ -68,11 +51,9 @@ def add_measurements(qobj):
     return new_qobj
 
 
-def add_snapshots(qobj):
+def add_density_matrix(qobj):
     new_qobj = copy.deepcopy(qobj)
     new_qobj['config']['data'] = ['density_matrix']
-    for circuit in new_qobj['circuits']:
-        circuit['compiled_circuit']['operations'].append({"name": "snapshot", "params": [0]})
     return new_qobj
 
 
@@ -84,25 +65,30 @@ def metric_fro_exact_clifford(exact_result, clifford_result, circuit_index, num_
     return np.linalg.norm(exact_matrix - clifford_matrix)
 
 
-# def circuit_xunion(lhs_circuit, rhs_circuit):
-#     new_rhs_circuit = copy.deepcopy(rhs_circuit)
-#     new_lhs_circuit = copy.deepcopy(lhs_circuit)
-#     lhs_qubits_num = lhs_circuit['compiled_circuit']['header']['number_of_qubits']
-#     rhs_qubits_num = rhs_circuit['compiled_circuit']['header']['number_of_qubits']
-#     new_qubits_num = rhs_qubits_num + lhs_qubits_num
-#
-#     for operation in new_rhs_circuit['compiled_circuit']['operations']:
-#         if 'qubits' in operation:
-#             operation['qubits'] = [j + lhs_qubits_num for j in operation['qubits']]
-#     new_lhs_circuit['compiled_circuit']['operations'] += new_rhs_circuit['compiled_circuit']['operations']
-#
-#     new_lhs_circuit['compiled_circuit']['header']['number_of_qubits'] = new_qubits_num
-#     new_lhs_circuit['compiled_circuit']['header']['number_of_clbits'] = new_qubits_num
-#     new_lhs_circuit['compiled_circuit']['header']['clbit_labels'] = [['c', new_qubits_num]]
-#     for i in range(rhs_qubits_num):
-#         new_lhs_circuit['compiled_circuit']['header']['qubit_labels'].append(['q', lhs_qubits_num + i])
-#
-#     return new_lhs_circuit
+def metric_fro_exact_exact(result1, result2, circuit_index, num_of_qubits):
+    return np.linalg.norm(
+        extract_density_matrix(result2, circuit_index) - extract_density_matrix(result1, circuit_index))
+
+
+def unify_circuits(circuit1, circuit2):
+    new_circuit1 = copy.deepcopy(circuit1)
+    new_circuit2 = copy.deepcopy(circuit2)
+    qubits_num1 = circuit1['compiled_circuit']['header']['number_of_qubits']
+    qubits_num2 = circuit2['compiled_circuit']['header']['number_of_qubits']
+    qubits_num = qubits_num2 + qubits_num1
+
+    for operation in new_circuit2['compiled_circuit']['operations']:
+        if 'qubits' in operation:
+            operation['qubits'] = [j + qubits_num1 for j in operation['qubits']]
+    new_circuit1['compiled_circuit']['operations'] += new_circuit2['compiled_circuit']['operations']
+
+    new_circuit1['compiled_circuit']['header']['number_of_qubits'] = qubits_num
+    new_circuit1['compiled_circuit']['header']['number_of_clbits'] = qubits_num
+    new_circuit1['compiled_circuit']['header']['clbit_labels'] = [['c', qubits_num]]
+    for i in range(qubits_num2):
+        new_circuit1['compiled_circuit']['header']['qubit_labels'].append(['q', qubits_num1 + i])
+
+    return new_circuit1
 
 
 def calculate_gate_time(gamma):     # TODO: write it more generic (with r and [a,b])
@@ -127,17 +113,9 @@ def amplitude_damping_matrices(g):
     return [[[1, 0], [0, np.sqrt(1 - g)]], [[0, np.sqrt(g)], [0, 0]]]
 
 
-def set_backend(qobj, backend):
-    assert backend not in Backends, "Backend %s is not supported" % backend     # TODO: don't like the assert
-    if 'config' not in qobj:
-        qobj['config'] = {}
-    qobj['config']['backend'] = backend
-
-
 def set_amplitude_damping(qobj, gamma):
     E0_E1 = amplitude_damping_matrices(gamma)
-    qobj['config']['noise_params'] = {gate: {'operator_sum': E0_E1}
-                                     for gate in GateErrors}
+    qobj['config']['noise_params'] = {gate: {'operator_sum': E0_E1} for gate in GateErrors}
 
 
 def set_relaxation(qobj, gamma):
@@ -147,11 +125,6 @@ def set_relaxation(qobj, gamma):
         'thermal_populations': THERMAL_POPULATIONS,
         **{gate: {'gate_time': gate_time} for gate in GateErrors}
     }
-
-
-def parse_gate_string(s):
-    return list(map(lambda x: {"name": x[0], "qubits": list(map(lambda a: int(a), re.findall('\d', x[1])))},
-                    re.findall('([a-z, A-Z]+)(\d+)', s)))
 
 
 def generate_circuit(num_qubits, operations, with_measure):
@@ -192,8 +165,33 @@ def create_basic_qobj(name, shots, seed):
     }
 
 
-def run(qobj, gamma, backend, noise_generator):
+def run(qobj, gamma, backend, noise_callback):
     qobj['config']['backend'] = backend
-    noise_generator(qobj, gamma)
+    noise_callback(qobj, gamma)
     return qs.run(qobj, sim_path)
 
+
+def _run_experiment(qobj, gamma_range, sim1_str, sim2_str, sim1_noise_callback, sim2_noise_callback):
+    res1 = []
+    res2 = []
+    for gamma in gamma_range:
+        res1.append(run(qobj, gamma, sim1_str, sim1_noise_callback))
+        res2.append(run(qobj, gamma, sim2_str, sim2_noise_callback))
+    return res1, res2
+
+
+def _run_experiment_exact_only(qobj, gamma_range):
+    return _run_experiment(add_density_matrix(qobj), gamma_range,
+                           EXACT_SIM_STR, EXACT_SIM_STR, set_amplitude_damping, set_relaxation)
+
+
+def _run_experiment_with_clifford(qobj, gamma_range):
+    return _run_experiment(add_measurements(qobj), gamma_range,
+                           EXACT_SIM_STR, CLIFFORD_SIM_STR, set_amplitude_damping, set_relaxation)
+
+
+def run_experiment(qobj, gamma_range, experiment_type):
+    return {
+        ExperimentType.EXACT_ONLY: _run_experiment_exact_only,
+        ExperimentType.WITH_CLIFFORD: _run_experiment_with_clifford
+    }[experiment_type](qobj, gamma_range)
